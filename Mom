@@ -1,290 +1,83 @@
--- Tiny Task for Roblox using Rayfield UI
--- No key system, toggle via UI button
--- Features: Record, Play, Stop, Speed slider, Loop count, Save/Load (in-memory for simplicity, can extend to files)
-
-local Players = game:GetService("Players")
-local UserInputService = game:GetService("UserInputService")
-local RunService = game:GetService("RunService")
-local VirtualInputManager = game:GetService("VirtualInputManager") -- Requires exploit support
-local TweenService = game:GetService("TweenService")
-local HttpService = game:GetService("HttpService")
-
-local player = Players.LocalPlayer
-local playerGui = player:WaitForChild("PlayerGui")
-
--- Load Rayfield
 local Rayfield = loadstring(game:HttpGet('https://sirius.menu/rayfield'))()
+local Window = Rayfield:CreateWindow({
+    Name = "Aimbot Hub",
+    LoadingTitle = "Loading...",
+    LoadingSubtitle = "by You",
+    ConfigurationSaving = {Enabled = false},
+    KeySystem = false
+})
+local Tab = Window:CreateTab("Main", 4483362458)
 
--- Variables for macro
-local recording = false
-local playback = false
-local actions = {}
-local startTime = 0
-local recordConnection
-local playbackConnection
-local speedMultiplier = 1
-local loopCount = 1
-local currentLoop = 0
+local AimbotEnabled = false
+local Camera = workspace.CurrentCamera
+local Players = game:GetService("Players")
+local LocalPlayer = Players.LocalPlayer
+local CurrentHighlight = nil
 
--- Create ScreenGui for toggle button
-local screenGui = Instance.new("ScreenGui")
-screenGui.Name = "TinyTaskGui"
-screenGui.Parent = playerGui
-screenGui.ResetOnSpawn = false
+local function GetClosestPlayer()
+    local closestPlayer = nil
+    local closestDistance = math.huge
+    local localPos = LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("Head") and LocalPlayer.Character.Head.Position
 
-local toggleButton = Instance.new("TextButton")
-toggleButton.Name = "ToggleButton"
-toggleButton.Size = UDim2.new(0, 150, 0, 50)
-toggleButton.Position = UDim2.new(0, 10, 0, 10)
-toggleButton.BackgroundColor3 = Color3.fromRGB(0, 162, 255)
-toggleButton.Text = "Tiny Task (Click to Open)"
-toggleButton.TextColor3 = Color3.fromRGB(255, 255, 255)
-toggleButton.TextScaled = true
-toggleButton.Font = Enum.Font.SourceSansBold
-toggleButton.Parent = screenGui
+    if not localPos then return nil end
 
-local windowOpen = false
-local Window
-
--- Function to create Rayfield window
-local function createWindow()
-    if windowOpen then return end
-    windowOpen = true
-    
-    Window = Rayfield:CreateWindow({
-        Name = "Tiny Task v1.0",
-        LoadingTitle = "Loading Tiny Task",
-        LoadingSubtitle = "Macro Recorder & Player",
-        ConfigurationSaving = {
-            Enabled = true,
-            FolderName = "TinyTaskConfig",
-            FileName = "config"
-        },
-        Discord = {
-            Enabled = false,
-            Invite = "",
-            RememberJoins = true
-        },
-        KeySystem = false -- No key system
-    })
-    
-    local MainTab = Window:CreateTab("Main", 4483362458)
-    local OptionsTab = Window:CreateTab("Options", 4483362458)
-    
-    -- Main Tab
-    local MainSection = MainTab:CreateSection("Controls")
-    
-    local recordButton = MainTab:CreateButton({
-        Name = "Start Recording",
-        Callback = function()
-            if recording then return end
-            recording = true
-            actions = {}
-            startTime = tick()
-            recordConnection = RunService.Heartbeat:Connect(function()
-                if not recording then return end
-                local currentTime = tick() - startTime
-                -- Record mouse position every 0.05 seconds (to avoid too much data)
-                if #actions == 0 or currentTime - actions[#actions].time >= 0.05 then
-                    table.insert(actions, {
-                        time = currentTime,
-                        type = "mouse",
-                        x = UserInputService:GetMouseLocation().X,
-                        y = UserInputService:GetMouseLocation().Y
-                    })
-                end
-            end)
-            
-            -- Listen for clicks
-            local clickConnection
-            clickConnection = UserInputService.InputBegan:Connect(function(input)
-                if not recording or input.UserInputType ~= Enum.UserInputType.MouseButton1 then return end
-                table.insert(actions, {
-                    time = tick() - startTime,
-                    type = "click",
-                    x = UserInputService:GetMouseLocation().X,
-                    y = UserInputService:GetMouseLocation().Y
-                })
-            end)
-            
-            -- Listen for key presses (simple, only printable keys)
-            local keyConnection
-            keyConnection = UserInputService.InputBegan:Connect(function(input, gameProcessed)
-                if not recording or gameProcessed or input.UserInputType ~= Enum.UserInputType.Keyboard then return end
-                local key = input.KeyCode.Name
-                if string.len(key) > 1 then return end -- Only single char keys
-                table.insert(actions, {
-                    time = tick() - startTime,
-                    type = "key",
-                    key = key
-                })
-            end)
-            
-            -- Store connections for cleanup
-            _G.recordConnections = {recordConnection, clickConnection, keyConnection}
-        end
-    })
-    
-    local stopRecordButton = MainTab:CreateButton({
-        Name = "Stop Recording",
-        Callback = function()
-            if not recording then return end
-            recording = false
-            if recordConnection then recordConnection:Disconnect() end
-            if _G.recordConnections then
-                for _, conn in pairs(_G.recordConnections) do
-                    conn:Disconnect()
-                end
-                _G.recordConnections = nil
-            end
-            print("Recorded " .. #actions .. " actions")
-        end
-    })
-    
-    local playButton = MainTab:CreateButton({
-        Name = "Play Macro",
-        Callback = function()
-            if playback or #actions == 0 then return end
-            playback = true
-            currentLoop = 0
-            local function playLoop()
-                currentLoop = currentLoop + 1
-                local loopStart = tick()
-                for i, action in ipairs(actions) do
-                    if not playback then break end
-                    local waitTime = (action.time - (i > 1 and actions[i-1].time or 0)) * speedMultiplier
-                    wait(waitTime)
-                    
-                    if action.type == "mouse" then
-                        -- Simulate mouse move (using VirtualInputManager)
-                        VirtualInputManager:SendMouseMove(action.x, action.y, game, nil)
-                    elseif action.type == "click" then
-                        VirtualInputManager:SendMouseButtonEvent(action.x, action.y, 0, true, game, nil) -- Down
-                        wait(0.01)
-                        VirtualInputManager:SendMouseButtonEvent(action.x, action.y, 0, false, game, nil) -- Up
-                    elseif action.type == "key" then
-                        VirtualInputManager:SendKeyEvent(true, Enum.KeyCode[action.key], false, game)
-                        wait(0.01)
-                        VirtualInputManager:SendKeyEvent(false, Enum.KeyCode[action.key], false, game)
-                    end
-                end
-                if currentLoop < loopCount then
-                    playLoop()
-                else
-                    playback = false
-                end
-            end
-            playLoop()
-        end
-    })
-    
-    local stopPlayButton = MainTab:CreateButton({
-        Name = "Stop Playback",
-        Callback = function()
-            playback = false
-            recording = false
-        end
-    })
-    
-    local MainSection2 = MainTab:CreateSection("Macro Info")
-    local actionCountLabel = MainTab:CreateLabel("Actions Recorded: 0")
-    
-    -- Update label
-    spawn(function()
-        while true do
-            wait(1)
-            if Window then
-                actionCountLabel:Set("Actions Recorded: " .. #actions)
+    for _, player in pairs(Players:GetPlayers()) do
+        if player ~= LocalPlayer and player.Character and player.Character:FindFirstChild("Head") then
+            local head = player.Character.Head
+            local distance = (head.Position - localPos).Magnitude
+            if distance < closestDistance then
+                closestDistance = distance
+                closestPlayer = player
             end
         end
-    end)
-    
-    -- Options Tab
-    local OptionsSection = OptionsTab:CreateSection("Playback Settings")
-    
-    local speedSlider = OptionsTab:CreateSlider({
-        Name = "Speed Multiplier",
-        Range = {0.1, 5},
-        Increment = 0.1,
-        Suffix = "x",
-        CurrentValue = 1,
-        Flag = "SpeedSlider",
-        Callback = function(Value)
-            speedMultiplier = Value
-        end
-    })
-    
-    local loopSlider = OptionsTab:CreateSlider({
-        Name = "Loop Count",
-        Range = {1, 50},
-        Increment = 1,
-        Suffix = " times",
-        CurrentValue = 1,
-        Flag = "LoopSlider",
-        Callback = function(Value)
-            loopCount = Value
-        end
-    })
-    
-    local saveButton = OptionsTab:CreateButton({
-        Name = "Save Macro (Copy to Clipboard)",
-        Callback = function()
-            if #actions == 0 then return end
-            local json = HttpService:JSONEncode(actions)
-            setclipboard(json)
-            Rayfield:Notify({
-                Title = "Saved",
-                Content = "Macro copied to clipboard!",
-                Duration = 3,
-                Image = 4483362458
-            })
-        end
-    })
-    
-    local loadButton = OptionsTab:CreateButton({
-        Name = "Load Macro (From Clipboard)",
-        Callback = function()
-            local success, result = pcall(function()
-                return HttpService:JSONDecode(getclipboard())
-            end)
-            if success and type(result) == "table" then
-                actions = result
-                Rayfield:Notify({
-                    Title = "Loaded",
-                    Content = "Macro loaded from clipboard! (" .. #actions .. " actions)",
-                    Duration = 3,
-                    Image = 4483362458
-                })
-            else
-                Rayfield:Notify({
-                    Title = "Error",
-                    Content = "Invalid macro data in clipboard!",
-                    Duration = 3,
-                    Image = 4483362459
-                })
-            end
-        end
-    })
-    
-    -- Close button in Rayfield
-    Window:OnClose(function()
-        windowOpen = false
-    end)
+    end
+    return closestPlayer
 end
 
--- Toggle button functionality
-toggleButton.MouseButton1Click:Connect(function()
-    if windowOpen then
-        Window:Destroy()
-        windowOpen = false
-        toggleButton.Text = "Tiny Task (Click to Open)"
-    else
-        createWindow()
-        toggleButton.Text = "Tiny Task (Click to Close)"
+local function ClearHighlight()
+    if CurrentHighlight then
+        CurrentHighlight:Destroy()
+        CurrentHighlight = nil
     end
-end)
+end
 
--- Initial load
-createWindow()
+local Button = Tab:CreateButton({
+    Name = "Toggle Aimbot & ESP",
+    Callback = function()
+        AimbotEnabled = not AimbotEnabled
+        Rayfield:Notify({
+            Title = "Aimbot & ESP",
+            Content = AimbotEnabled and "Enabled" or "Disabled",
+            Duration = 2
+        })
 
-print("Tiny Task loaded! Click the blue button to toggle the UI.")
+        if AimbotEnabled then
+            spawn(function()
+                while AimbotEnabled do
+                    local target = GetClosestPlayer()
+                    if target and target.Character and target.Character:FindFirstChild("Head") then
+                        -- Aimbot: Lock camera to target's head
+                        Camera.CFrame = CFrame.new(Camera.CFrame.Position, target.Character.Head.Position)
+
+                        -- ESP: Highlight the target
+                        ClearHighlight() -- Remove previous highlight
+                        local highlight = Instance.new("Highlight")
+                        highlight.Adornee = target.Character
+                        highlight.FillColor = Color3.fromRGB(255, 0, 0) -- Red glow
+                        highlight.OutlineColor = Color3.fromRGB(255, 255, 255) -- White outline
+                        highlight.FillTransparency = 0.5
+                        highlight.OutlineTransparency = 0
+                        highlight.Parent = target.Character
+                        CurrentHighlight = highlight
+                    else
+                        ClearHighlight() -- Clear if no target
+                    end
+                    wait()
+                end
+                ClearHighlight() -- Clean up when disabled
+            end)
+        else
+            ClearHighlight() -- Clear highlight when toggled off
+        end
+    end,
+})
